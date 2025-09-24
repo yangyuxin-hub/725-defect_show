@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RCC version="1.0">
+    <qresource prefix="/new/prefix1">
+        <!-- 在这里添加您的资源文件 -->
+        <!-- 例如: -->
+        <!-- <file>images/background.png</file> -->
+        <!-- <file>images/logo2.png</file> -->
+    </qresource>
+</RCC>
