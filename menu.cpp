@@ -144,7 +144,7 @@ Menu::Menu(QWidget *parent)
     ui->voltagePlot->setStyleSheet("background: transparent;");
     ui->voltagePlot->addGraph();
     ui->voltagePlot->graph(0)->setPen(QPen(Qt::blue, 1)); // 设置图表颜色为蓝色
-    ui->voltagePlot->yAxis->setRange(0,50);
+    ui->voltagePlot->yAxis->setRange(0,150);
     ui->voltagePlot->xAxis->grid()->setVisible(true);
     ui->voltagePlot->yAxis->grid()->setVisible(true);
     ui->voltagePlot->xAxis2->setVisible(true);
@@ -171,7 +171,7 @@ Menu::Menu(QWidget *parent)
     ui->soundPlot->setStyleSheet("background: transparent;");
     ui->soundPlot->addGraph();
     ui->soundPlot->graph(0)->setPen(QPen(Qt::green, 1)); // 设置图表颜色为绿色
-    ui->soundPlot->yAxis->setRange(0,100);
+    ui->soundPlot->yAxis->setRange(-5,5);
     ui->soundPlot->xAxis->grid()->setVisible(true);
     ui->soundPlot->yAxis->grid()->setVisible(true);
     ui->soundPlot->xAxis2->setVisible(true);
@@ -714,8 +714,116 @@ void Menu::loadDefectData(const QString& defectType)
     qDebug() << "开始光谱播放，4Hz频率";
 }
 
+// 按钮：开始采集 - 清空画面回到原始界面状态
+void Menu::on_startButton_clicked()
+{
+    qDebug() << "点击开始采集按钮 - 清空画面回到原始状态";
+    
+    // 停止所有正在进行的播放和绘图
+    if (isPlayingSpec) {
+        specPlayTimer->stop();
+        isPlayingSpec = false;
+        qDebug() << "停止光谱播放";
+    }
+    
+    if (isPlayingImages) {
+        imagePlayTimer->stop();
+        isPlayingImages = false;
+        qDebug() << "停止熔池图像播放";
+    }
+    
+    if (isPlayingIrImages) {
+        irImagePlayTimer->stop();
+        isPlayingIrImages = false;
+        qDebug() << "停止红外图像播放";
+    }
+    
+    if (isPlotting) {
+        plotUpdateTimer->stop();
+        isPlotting = false;
+        qDebug() << "停止当前数据绘图";
+    }
+    
+    // 清空所有图表数据
+    ui->currentPlot->graph(0)->data()->clear();
+    ui->voltagePlot->graph(0)->data()->clear();
+    ui->soundPlot->graph(0)->data()->clear();
+    ui->specPlot->graph(0)->data()->clear();
+    
+    // 重置图表显示范围到初始状态
+    ui->currentPlot->yAxis->setRange(0, 500);
+    ui->voltagePlot->yAxis->setRange(0, 150);
+    ui->soundPlot->yAxis->setRange(-5, 5);
+    ui->specPlot->yAxis->setRange(0, 300);
+    
+    // 重新绘制清空的图表
+    ui->currentPlot->replot();
+    ui->voltagePlot->replot();
+    ui->soundPlot->replot();
+    ui->specPlot->replot();
+    
+    
+    // 确保图像框架可见
+    ui->gvMain->show(); // 熔池图像视图
+    ui->lblImage->show(); // 红外图像标签
+    
+    // 清空图像显示
+    if (imageScene) {
+        imageScene->clear();
+        // 重新创建图像项，因为clear()会删除所有项
+        imageItem = new QGraphicsPixmapItem();
+        imageScene->addItem(imageItem);
+        qDebug() << "重新创建熔池图像项";
+    }
+    
+    // 清空红外图像显示，恢复到初始状态
+    ui->lblImage->clear();
+    ui->lblImage->setText("Image"); // 恢复到初始文本
+    ui->lblImage->setStyleSheet("color: black; border: 1px solid black; background-color: transparent;");
+    
+    // 清空所有数据容器
+    allElecData.clear();
+    allVoltData.clear();
+    allSoundData.clear();
+    allSpecDataX.clear();
+    allSpecDataY.clear();
+    elecDisplayData.clear();
+    voltDisplayData.clear();
+    soundDisplayData.clear();
+    specFileList.clear();
+    imageFileList.clear();
+    irImageFileList.clear();
+    
+    // 重置索引
+    currentDataIndex = 0;
+    currentSpecFileIndex = 0;
+    currentImageIndex = 0;
+    currentIrImageIndex = 0;
+    
+    // 清空当前缺陷路径
+    currentDefectPath = "";
+    
+    // 重新初始化显示数据数组，防止访问越界
+    xAxisData.resize(windowSize);
+    elecDisplayData.resize(windowSize);
+    voltDisplayData.resize(windowSize);
+    soundDisplayData.resize(windowSize);
+    
+    // 用初始值填充数组
+    for (int i = 0; i < windowSize; ++i) {
+        xAxisData[i] = i;
+        elecDisplayData[i] = 0.0;
+        voltDisplayData[i] = 0.0;
+        soundDisplayData[i] = 0.0;
+    }
+    
+    // 重置窗口标题
+    this->setWindowTitle("焊接监测软件");
+    
+    qDebug() << "界面已清空，回到原始状态";
+}
+
 // 所有其他函数都已注释掉
-// void Menu::on_startButton_clicked() { ... }
 // void Menu::on_stopButton_clicked() { ... }
 // void Menu::on_saveButton_clicked() { ... }
 // void Menu::on_craft_data_clicked() { ... }
@@ -723,27 +831,45 @@ void Menu::loadDefectData(const QString& defectType)
 // void Menu::captureInfrared() { ... }
 // void Menu::openSubModule() { ... }
 // void Menu::openConfiguredialog() { ... }
+
+// 简化：直接通过成员变量控制重置
+
 // 实时更新绘图数据 - 50ms间隔更新，保持与40160Hz采样率的时间同步
 void Menu::updatePlotData()
 {
     if (!isPlotting || allElecData.isEmpty() || allVoltData.isEmpty() || allSoundData.isEmpty()) {
         return;
     }
-
-    // 时间同步：计算应该到达的数据位置
-    static QElapsedTimer realTimeTimer;
-    static bool timerInitialized = false;
-    static int startDataIndex = 0;
     
-    if (!timerInitialized) {
+    // 安全检查：确保显示数据数组大小正确
+    if (elecDisplayData.size() != windowSize || voltDisplayData.size() != windowSize || 
+        soundDisplayData.size() != windowSize || xAxisData.size() != windowSize) {
+        qDebug() << "显示数据数组大小不正确，重新初始化";
+        elecDisplayData.resize(windowSize);
+        voltDisplayData.resize(windowSize);
+        soundDisplayData.resize(windowSize);
+        xAxisData.resize(windowSize);
+        for (int i = 0; i < windowSize; ++i) {
+            elecDisplayData[i] = 0.0;
+            voltDisplayData[i] = 0.0;
+            soundDisplayData[i] = 0.0;
+            xAxisData[i] = i;
+        }
+    }
+
+    // 简化：每次开始绘图时重新初始化定时器
+    static QElapsedTimer realTimeTimer;
+    static int lastDataIndex = -1;
+    
+    // 如果是新的数据序列，重新开始计时
+    if (lastDataIndex != currentDataIndex || currentDataIndex == 0) {
         realTimeTimer.start();
-        startDataIndex = currentDataIndex;
-        timerInitialized = true;
+        lastDataIndex = currentDataIndex;
     }
     
     // 计算基于实际时间应该到达的数据索引
     qint64 elapsedMs = realTimeTimer.elapsed();
-    int expectedDataIndex = startDataIndex + (elapsedMs * samplingRate / 1000);
+    int expectedDataIndex = currentDataIndex + (elapsedMs * samplingRate / 1000);
     
     // 检查是否还有数据需要显示（以最小数据量为准）
     int minDataSize = qMin(allElecData.size(), qMin(allVoltData.size(), allSoundData.size()));
@@ -899,11 +1025,11 @@ void Menu::updateImagePlayback()
         return;
     }
     
-    // 计算抽帧策略 - 每2帧选1帧播放，保证70秒内播放完
+    // 简化：直接使用成员变量，不需要静态变量
     static int frameSkip = 2;
-    static int actualImageIndex = 0;
     
-    // 检查是否播放完所有图像
+    // 检查是否播放完所有图像（使用跳帧策略）
+    int actualImageIndex = currentImageIndex * frameSkip;
     if (actualImageIndex >= imageFileList.size()) {
         imagePlayTimer->stop();
         isPlayingImages = false;
@@ -940,14 +1066,13 @@ void Menu::updateImagePlayback()
         ui->gvMain->fitInView(imageScene->sceneRect(), Qt::IgnoreAspectRatio);
         
         qDebug() << "显示熔池图像:" << imageFileList[actualImageIndex] 
-                 << "(" << (actualImageIndex + 1) << "/" << imageFileList.size() << ")"
+                 << "(" << (currentImageIndex + 1) << "/" << (imageFileList.size()/frameSkip) << ")"
                  << "跳帧:" << frameSkip;
     } else {
         qDebug() << "无法加载图像:" << currentImageFile;
     }
     
-    // 跳帧移动到下一张图像
-    actualImageIndex += frameSkip;
+    // 移动到下一张图像
     currentImageIndex++;
 }
 

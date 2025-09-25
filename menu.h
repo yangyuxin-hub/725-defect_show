@@ -55,7 +55,7 @@ public:
 private slots:
 //    void on_configButton_clicked();
 
-    // void on_startButton_clicked();
+    void on_startButton_clicked();
 
     // void on_stopButton_clicked();
 
